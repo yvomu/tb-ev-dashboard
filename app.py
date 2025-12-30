@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
+import os
 # =========================================================
 # Page config
 # =========================================================
@@ -13,7 +14,15 @@ st.set_page_config(
 plt.rcParams['font.sans-serif'] = ['Noto Sans CJK JP']
 plt.rcParams['axes.unicode_minus'] = False
 # 重新載入所有系統字型
-font_manager.fontManager.addfont("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+FONT_PATH = os.path.join("fonts", "NotoSansCJK-Regular.ttc")
+
+if os.path.exists(FONT_PATH):
+    font_manager.fontManager.addfont(FONT_PATH)
+    plt.rcParams["font.sans-serif"] = ["Noto Sans CJK JP"]
+    plt.rcParams["axes.unicode_minus"] = False
+else:
+    # 保底：至少不炸
+    plt.rcParams["font.sans-serif"] = ["DejaVu Sans"]
 # =========================================================
 # Global constants (防呆核心)
 # =========================================================
