@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import os
+import math
+from matplotlib.patches import Patch
 
 # =========================================================
 # Page config
@@ -29,7 +31,12 @@ plt.rcParams["axes.unicode_minus"] = False
 # =========================================================
 SERVE_ACTIONS = [15, 16, 17, 18]
 NON_SERVE_ACTIONS = list(range(0, 15))
-
+legend_elements = [
+    Patch(facecolor="#1f77b4", label="高信心 (CI ≤ 0.15) "),
+    Patch(facecolor="#8ee6d9", label="中信心 (0.15~0.25) "),
+    Patch(facecolor="#ffb703", label="低信心 (0.25~0.40) "),
+    Patch(facecolor="#d62828", label="極低信心 (> 0.40) "),
+]
 # =========================================================
 # Labels
 # =========================================================
@@ -42,7 +49,6 @@ action_label = {
     15:"傳統(Traditional serve)",16:"勾手(Hook serve)",
     17:"逆旋轉(Reverse serve)",18:"下蹲式(Squat serve)"
 }
-
 spin_label = {
     0:"無(Zero)",1:"上旋(Top)",2:"下旋(Back)",
     3:"不旋(No spin)",4:"側上旋(Side top)",5:"側下旋(Side back)"
@@ -83,7 +89,6 @@ SCENARIOS = {
         "player_csv": "data/strategy_player_share_A1C.csv",
     },
 }
-player_map_df = pd.read_csv("data/player_id_mapping.csv")
 
 # =========================================================
 # Utils
@@ -95,17 +100,53 @@ def load_csv(path):
 def make_c_label(row, use_spin):
     if use_spin:
         return f"{action_label[row.C_actionId]} + {spin_label[row.C_spinId]}"
+    return action_label[row.C_actionId]
+
+def wilson_ci(p, n, z=1.96):
+    if n == 0:
+        return (0.0, 0.0)
+    denom = 1 + z**2 / n
+    center = (p + z**2 / (2*n)) / denom
+    margin = z * math.sqrt(
+        (p*(1-p)/n) + (z**2/(4*n**2))
+    ) / denom
+    return center - margin, center + margin
+
+def ci_confidence(row):
+    width = row["ci_high"] - row["ci_low"]
+    if width > 0.40:
+        return "極低"
+    elif width > 0.25:
+        return "低"
+    elif width > 0.15:
+        return "中"
     else:
-        return action_label[row.C_actionId]
+        return "高"
+
+def confidence_color(conf):
+    return {
+        "高": "#1f77b4",     # deep blue
+        "中": "#8ee6d9",     # light blue
+        "低": "#ffb703",    # orange
+        "極低": "#d62828"   # red
+    }[conf]
 
 def plot_ev_usage(df):
     df = df.sort_values("EV", ascending=False).reset_index(drop=True)
     x = np.arange(len(df))
 
+    colors = df["Strategy_Confidence"].apply(confidence_color)
+
     fig, ax1 = plt.subplots(figsize=(14,6))
-    ax1.bar(x, df["EV"])
+    ax1.bar(x, df["EV"], color=colors)
     ax1.set_ylim(0,1.05)
     ax1.set_ylabel("Expected Value (EV)")
+    ax1.legend(
+        handles=legend_elements,
+        title="策略估計可信度 (95% CI) ",
+        loc="upper right",
+        frameon=True
+    )
 
     for i,v in enumerate(df["EV"]):
         ax1.text(i, v+0.015, f"{v:.3f}", ha="center", fontsize=9)
@@ -113,7 +154,6 @@ def plot_ev_usage(df):
     ax2 = ax1.twinx()
     ax2.plot(x, df["usage_rate"], color="black", marker="o")
     ax2.set_ylabel("Usage Rate")
-
     for i,u in enumerate(df["usage_rate"]):
         ax2.text(i, u+max(df["usage_rate"])*0.03, f"{u*100:.1f}%", ha="center", fontsize=9)
 
@@ -133,19 +173,18 @@ scenario_key = st.sidebar.radio(
     format_func=lambda k: SCENARIOS[k]["name"]
 )
 cfg = SCENARIOS[scenario_key]
-
 df = load_csv(cfg["csv"])
 
 A_action_options = SERVE_ACTIONS if cfg["serve_only"] else NON_SERVE_ACTIONS
 A_action = st.sidebar.selectbox(
-    "A_action（先手動作）",
+    "A_action (先手動作) ",
     A_action_options,
     format_func=lambda x: action_label[x]
 )
 
 if cfg["use_spin"]:
     A_spin = st.sidebar.selectbox(
-        "A_spin（旋轉）",
+        "A_spin (旋轉)",
         sorted(df[df.A1_actionId==A_action]["A1_spinId"].unique()),
         format_func=lambda x: spin_label[x]
     )
@@ -169,9 +208,18 @@ df_sel["C_label"] = df_sel.apply(
 )
 
 # =========================================================
+# Strategy CI & confidence
+# =========================================================
+df_sel["ci_low"], df_sel["ci_high"] = zip(*df_sel.apply(
+    lambda r: wilson_ci(r["EV"], r["count"]),
+    axis=1
+))
+df_sel["Strategy_Confidence"] = df_sel.apply(ci_confidence, axis=1)
+
+# =========================================================
 # Main
 # =========================================================
-st.title("桌球策略期望值（EV）Dashboard")
+st.title("桌球策略期望值 (EV) Dashboard")
 
 spin_text = spin_label[A_spin] if A_spin is not None else "未區分旋轉"
 st.markdown(f"""
@@ -180,36 +228,61 @@ st.markdown(f"""
 **A_spin：** {spin_text}
 """)
 
-# EV Plot
 plot_ev_usage(df_sel)
 
+st.caption(
+    "EV 為策略層級勝率估計值；長條顏色代表估計信心度 (依 Wilson 信賴區間寬度) "
+)
+st.markdown("#### 策略估計可信度")
+
+summary_df = df_sel.copy()
+
+summary_df["95% CI"] = summary_df.apply(
+    lambda r: f"[{r.ci_low:.2f}, {r.ci_high:.2f}]",
+    axis=1
+)
+
+summary_df = summary_df[[
+    "C_label",
+    "EV",
+    "count",
+    "95% CI",
+    "Strategy_Confidence"
+]].rename(columns={
+    "C_label": "策略",
+    "count": "樣本數",
+    "Strategy_Confidence": "信心度"
+})
+
+summary_df = summary_df.sort_values("EV", ascending=False)
+summary_df = summary_df.reset_index(drop=True)
+st.dataframe(
+    summary_df,
+    use_container_width=True
+)
+
 # =========================================================
-# Select C_action for player analysis
+# Select C_action
 # =========================================================
-st.markdown("### 選擇欲分析的後續策略（C_action）")
+st.markdown("### 選擇欲分析的後續策略")
 
 df_sorted = df_sel.sort_values("EV", ascending=False).reset_index(drop=True)
-c_idx = st.selectbox(
+idx = st.selectbox(
     "C_action",
     range(len(df_sorted)),
     format_func=lambda i: df_sorted.loc[i,"C_label"]
 )
-c_row = df_sorted.loc[c_idx]
+c_row = df_sorted.loc[idx]
 
 # =========================================================
 # Player Top-5 table
 # =========================================================
-st.subheader("此策略前 5 高使用率選手")
+st.markdown("#### 前 5 高使用率選手（此策略）")
 
 if not cfg.get("player", False):
     st.info("此視角未提供選手行為分析")
 else:
     pdf = load_csv(cfg["player_csv"])
-    pdf = pdf.merge(
-    player_map_df,
-    left_on="A1_playerId",
-    right_on="player_id",
-    how="left"    )
 
     if cfg["use_spin"]:
         pdf = pdf[
@@ -237,12 +310,12 @@ else:
 
         st.dataframe(
             top_players.rename(columns={
-                "player_name":"Player",
+                "A1_playerId":"Player",
                 "use_count":"Use Count",
-                "usage_share":"Usage Rate (%)",
+                "usage_share":"Usage Share (%)",
                 "win_rate":"Win Rate (%)"
             })[
-                ["Player","Use Count","Usage Rate (%)","Win Rate (%)"]
+                ["Player","Use Count","Usage Share (%)","Win Rate (%)"]
             ],
             use_container_width=True
         )
