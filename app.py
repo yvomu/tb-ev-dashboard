@@ -59,14 +59,14 @@ spin_label = {
 # =========================================================
 SCENARIOS = {
     "S1": {
-        "name": "終局策略（後四拍・含旋轉）",
+        "name": "相持階段策略（最後四拍・含旋轉）",
         "csv": "data/last4_action_spin.csv",
         "serve_only": False,
         "use_spin": True,
         "player": False,
     },
     "S2": {
-        "name": "終局策略（後四拍・不含旋轉）",
+        "name": "相持階段策略（最後四拍・不含旋轉）",
         "csv": "data/last4_action.csv",
         "serve_only": False,
         "use_spin": False,
