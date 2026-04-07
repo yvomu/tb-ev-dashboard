@@ -445,12 +445,11 @@ else:
     spin_text = safe_spin_name(A_spin) if A_spin is not None else "未區分旋轉"
     player_info = get_player_info(selected_player, player_name_map)
     player_name = player_info["player_name"]
-    phase_text = phase_text_from_csv(cfg["csv"])
+    #phase_text = phase_text_from_csv(cfg["csv"])
 
     st.markdown(f"""
 **分頁：** Self Player  
 **Scenario：** {cfg['name']}  
-**Phase：** {phase_text}  
 **選手：** {player_name} (ID: {int(selected_player)})  
 &nbsp;&nbsp;&nbsp;&nbsp;Rally Count：{format_count_value(player_info['rally_count'])}  
 &nbsp;&nbsp;&nbsp;&nbsp;比賽場次數量：{format_count_value(player_info['match_count'])}  
