@@ -58,20 +58,14 @@ spin_label = {
 # =========================================================
 GLOBAL_SCENARIOS = {
     "S1": {
-        "name": "相持階段策略（最後四拍・含旋轉）",
-        "csv": "data/last4_action_spin.csv",
-        "serve_only": False,
-        "use_spin": True,
-        "player": False,
+        "name": "發球策略（前三拍・不含旋轉）",
+        "csv": "data/serve3_action.csv",
+        "serve_only": True,
+        "use_spin": False,
+        "player": True,
+        "player_csv": "data/strategy_player_share_A1C.csv",
     },
     "S2": {
-        "name": "相持階段策略（最後四拍・不含旋轉）",
-        "csv": "data/last4_action.csv",
-        "serve_only": False,
-        "use_spin": False,
-        "player": False,
-    },
-    "S3": {
         "name": "發球策略（前三拍・含旋轉）",
         "csv": "data/serve3_action_spin.csv",
         "serve_only": True,
@@ -79,13 +73,21 @@ GLOBAL_SCENARIOS = {
         "player": True,
         "player_csv": "data/strategy_player_share_A1C_spin.csv",
     },
-    "S4": {
-        "name": "發球策略（前三拍・不含旋轉）",
-        "csv": "data/serve3_action.csv",
-        "serve_only": True,
+    "S3": {
+        "name": "相持階段策略（最後三拍・不含旋轉）",
+        "csv": "data/last4_action.csv",
+        "serve_only": False,
         "use_spin": False,
-        "player": True,
-        "player_csv": "data/strategy_player_share_A1C.csv",
+        "player": False,
+        
+    },
+    "S4": {
+        
+        "name": "相持階段策略（最後三拍・含旋轉）",
+        "csv": "data/last4_action_spin.csv",
+        "serve_only": False,
+        "use_spin": True,
+        "player": False,
     },
 }
 
@@ -103,13 +105,13 @@ SELF_PLAYER_SCENARIOS = {
         "use_spin": True,
     },
     "P3": {
-        "name": "相持階段策略（最後四拍・不含旋轉）",
+        "name": "相持階段策略（最後三拍・不含旋轉）",
         "csv": "self_last_ev_table_action.csv",
         "serve_only": False,
         "use_spin": False,
     },
     "P4": {
-        "name": "相持階段策略（最後四拍・含旋轉）",
+        "name": "相持階段策略（最後三拍・含旋轉）",
         "csv": "self_last_ev_table_action_spin.csv",
         "serve_only": False,
         "use_spin": True,
@@ -276,7 +278,7 @@ def phase_text_from_csv(path: str):
     if "front" in lower:
         return "前三拍"
     if "last" in lower:
-        return "最後四拍"
+        return "最後三拍"
     return "未指定"
 
 
