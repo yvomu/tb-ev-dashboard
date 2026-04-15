@@ -57,14 +57,14 @@ spin_label = {
 }
 
 VIEW_OPTIONS = {
-    "global": "Global",
-    "self_player": "Self Player",
-    "opponent": "Opponent",
-    "both": "Both",
+    "global": "整體策略",
+    "self_player": "使用者視角",
+    "opponent": "對手視角",
+    "both": "雙方視角",
 }
 
 PHASE_OPTIONS = {
-    "front": "前三拍",
+    "front": "發球",
     "receive": "接發球",
     "last": "相持階段",
 }
