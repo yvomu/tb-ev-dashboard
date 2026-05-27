@@ -595,7 +595,7 @@ def find_conditional_response_file(
     view_key: str,
     phase_key: str,
     variant_key: str,
-    scoring_model: str = "xgb",
+    #scoring_model: str = "xgb",
     candidate_mode: str = "full_c",
 ) -> Optional[str]:
     files = list_csv_files_for_app()
@@ -609,8 +609,8 @@ def find_conditional_response_file(
             continue
         if not _filename_has_feature_type(basename, variant_key):
             continue
-        if scoring_model and scoring_model not in basename:
-            continue
+        #if scoring_model and scoring_model not in basename:
+        #    continue
         if candidate_mode and candidate_mode not in basename:
             continue
         if not _filename_has_view(basename, view_key):
@@ -625,7 +625,7 @@ def find_conditional_response_file(
             score += 30
         if view_key in basename:
             score += 20
-        if scoring_model in basename:
+        #if scoring_model in basename:
             score += 10
         if candidate_mode in basename:
             score += 10
@@ -711,7 +711,7 @@ def select_action_and_spin_from_conditional(df: pd.DataFrame, use_spin: bool, ke
         return None, None, df.iloc[0:0].copy()
 
     A_action = st.sidebar.selectbox(
-        "A_action (你現在這一球)",
+        "策略第一球(A)",
         available_actions,
         key=f"{key_prefix}_A_action",
         format_func=lambda x: safe_action_name(x),
@@ -725,10 +725,10 @@ def select_action_and_spin_from_conditional(df: pd.DataFrame, use_spin: bool, ke
             return A_action, None, out.iloc[0:0].copy()
         spin_candidates = sorted(out["A1_spinId"].dropna().astype(int).unique().tolist())
         if not spin_candidates:
-            render_no_data("沒有可選的 A_spin")
+            render_no_data("沒有可選的 spin")
             return A_action, None, out.iloc[0:0].copy()
         A_spin = st.sidebar.selectbox(
-            "A_spin (你現在這一球的旋轉)",
+            "策略第一球(A)的旋轉",
             spin_candidates,
             key=f"{key_prefix}_A_spin",
             format_func=lambda x: safe_spin_name(x),
@@ -784,7 +784,7 @@ def build_ev_from_conditional(df_a: pd.DataFrame, use_spin: bool) -> pd.DataFram
     out = tmp.groupby(c_cols, as_index=False).agg(agg_map).rename(columns={"weighted_win": "EV_from_conditional"})
     out = add_conditional_labels(out, use_spin)
     out = out.sort_values("EV_from_conditional", ascending=False).reset_index(drop=True)
-    out["綜合 EV (%)"] = (out["EV_from_conditional"] * 100).round(1)
+    out["期望平均勝率 (%)"] = (out["EV_from_conditional"] * 100).round(1)
     return out
 
 
@@ -806,26 +806,25 @@ def plot_horizontal_bar(df: pd.DataFrame, label_col: str, value_col: str, title:
 
 def render_next_response_page(view_key: str, phase_key: str, variant_key: str, player_info_map: Dict[int, dict]):
     st.title("下一拍回球模擬")
-    st.caption("這個頁面使用 conditional response table：先看對手下一拍 B 的機率，再看指定 B 後你回 C 的模型估計勝率。")
+    st.caption("這個頁面是先看對手下一拍 B 的機率，再看指定 B 後回 C 的模型估計勝率。")
 
     # 目前下一拍回球模擬固定使用 XGB scoring model 與 Full C 候選策略。
     # 因為沒有其他可選模式，不在 sidebar 顯示模式選項。
-    scoring_model = "xgb"
+    #scoring_model = "xgb"
     candidate_mode = "full_c"
 
     path = find_conditional_response_file(
         view_key=view_key,
         phase_key=phase_key,
         variant_key=variant_key,
-        scoring_model=scoring_model,
+        #scoring_model=scoring_model,
         candidate_mode=candidate_mode,
     )
     if path is None:
         st.warning(
             "找不到對應的 conditional response table。請把檔案放到 data/，"
-            "檔名建議包含 conditional_response、action/action_spin、xgb、full_c。"
         )
-        st.info("例如：conditional_response_table_action_xgb_full_c.csv")
+
         return
 
     raw_df = load_csv(path)
@@ -853,7 +852,7 @@ def render_next_response_page(view_key: str, phase_key: str, variant_key: str, p
         return
 
     st.markdown(build_header_markdown(view_key, phase_key, variant_key, selected_players, player_info_map, A_action, A_spin))
-    st.caption(f"資料檔：`{path}`")
+   
 
     required_cols = ["A1_actionId", "B1_actionId", "C_actionId", "p_b_given_a_context_mean", "p_win_given_abc_mean"]
     missing = [c for c in required_cols if c not in df_a.columns]
@@ -904,7 +903,7 @@ def render_next_response_page(view_key: str, phase_key: str, variant_key: str, p
         df_ab["預測範圍"] = df_ab.apply(lambda r: f"{r['p_win_given_abc_min']:.2f}–{r['p_win_given_abc_max']:.2f}", axis=1)
 
     st.markdown("## 2. 如果對手回這一球，我回哪一球勝率最高")
-    st.info("這裡的勝率是模型估計的 P(win | A, B, C)，不是 test set 真實勝率。")
+    
 
     c1, c2 = st.columns([1.15, 1])
     with c1:
@@ -929,13 +928,13 @@ def render_next_response_page(view_key: str, phase_key: str, variant_key: str, p
         render_no_data("無法從 conditional table 聚合 EV")
         return
 
-    display_cols = ["C_label", "綜合 EV (%)"]
+    display_cols = ["C_label", "期望平均勝率 (%)"]
     
     st.dataframe(
         ev_from_cond[display_cols].rename(columns={"C_label": "建議回球 C"}),
         width="stretch",
     )
-    st.caption("綜合 EV = Σ P(B|A) × P(win|A,B,C)。這個值可用來做一般策略推薦；指定 B 後勝率則用於情境假設分析。")
+    st.caption("這個值用來做一般策略推薦；指定 B 後勝率則用於情境假設分析。")
 
 
 def render_strategy_ev_page(view_key: str, phase_key: str, variant_key: str, player_info_map: Dict[int, dict]):
