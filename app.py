@@ -60,7 +60,6 @@ VIEW_OPTIONS = {
     "global": "整體策略",
     "self_player": "使用者視角",
     "opponent": "對手視角",
-    "both": "雙方視角",
 }
 
 PHASE_OPTIONS = {
@@ -90,7 +89,6 @@ VIEW_FILE_PREFIXES = {
     "global": ["global"],
     "self_player": ["self_player", "self"],
     "opponent": ["opponent", "oppent"],
-    "both": ["both"],
 }
 
 PHASE_FILE_ALIASES = {
