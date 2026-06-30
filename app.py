@@ -64,7 +64,7 @@ VIEW_OPTIONS = {
 
 PHASE_OPTIONS = {
     "front": "發球",
-    "receive": "接發球",
+    #"receive": "接發球",
     "last": "相持階段",
 }
 
@@ -81,7 +81,7 @@ PAGE_OPTIONS = {
 
 PHASE_TO_CONDITIONAL = {
     "front": "front3",
-    "receive": "receive",
+    #"receive": "receive",
     "last": "late",
 }
 
@@ -93,7 +93,7 @@ VIEW_FILE_PREFIXES = {
 
 PHASE_FILE_ALIASES = {
     "front": ["front", "serve3", "early"],
-    "receive": ["receive", "recv", "receiver"],
+    #"receive": ["receive", "recv", "receiver"],
     "last": ["last", "last4", "late", "rally"],
 }
 
