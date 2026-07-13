@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
+from huggingface_hub import hf_hub_download
 from matplotlib import font_manager
 from matplotlib.patches import Patch
 
@@ -30,6 +31,8 @@ plt.rcParams["axes.unicode_minus"] = False
 # =========================================================
 DATA_DIR = "data"
 PLAYER_MAPPING_PATH = os.path.join(DATA_DIR, "player_id_mapping.csv") if os.path.exists(os.path.join(DATA_DIR, "player_id_mapping.csv")) else "player_id_mapping.csv"
+HF_DATASET_REPO_DEFAULT = "wobuchida/tb-ewp-dashboard"
+HF_DATASET_REVISION_DEFAULT = "main"
 
 SERVE_ACTIONS = [15, 16, 17, 18]
 NON_SERVE_ACTIONS = list(range(0, 15))
@@ -63,9 +66,8 @@ VIEW_OPTIONS = {
 }
 
 PHASE_OPTIONS = {
-    "front": "發球",
-    #"receive": "接發球",
-    "last": "相持階段",
+    "front": "發球策略",
+    "last": "回合結束前策略",
 }
 
 VARIANT_OPTIONS = {
@@ -74,21 +76,14 @@ VARIANT_OPTIONS = {
 }
 
 PAGE_OPTIONS = {
-    "strategy_ev": "策略 EV 分析",
+    "strategy_ev": "策略 EWP 分析",
     "next_response": "下一拍回球模擬",
 }
 
 
 PHASE_TO_CONDITIONAL = {
     "front": "front3",
-    #"receive": "receive",
     "last": "late",
-}
-
-VIEW_FILE_PREFIXES = {
-    "global": ["global"],
-    "self_player": ["self_player", "self"],
-    "opponent": ["opponent", "oppent"],
 }
 
 PHASE_FILE_ALIASES = {
@@ -108,8 +103,14 @@ PLAYER_FILTER_SPECS = [
 # Utils
 # =========================================================
 @st.cache_data
-def load_csv(path: str) -> pd.DataFrame:
+def _load_csv(path: str, modified_ns: int) -> pd.DataFrame:
     return pd.read_csv(path)
+
+
+def load_csv(path: str) -> pd.DataFrame:
+    # 將檔案修改時間納入 cache key；CSV 在原路徑被重新 merge/覆寫後，
+    # Streamlit 才不會繼續使用缺少新欄位的舊 DataFrame。
+    return _load_csv(path, os.stat(path).st_mtime_ns)
 
 
 @st.cache_data
@@ -261,68 +262,6 @@ def prepare_strategy_df(df: pd.DataFrame, use_spin: bool) -> pd.DataFrame:
     return df
 
 
-def list_data_files() -> List[str]:
-    if not os.path.exists(DATA_DIR):
-        return []
-    return sorted(
-        [os.path.join(DATA_DIR, fname) for fname in os.listdir(DATA_DIR) if fname.lower().endswith(".csv")]
-    )
-
-
-def find_table_file(view_key: str, phase_key: str, variant_key: str, table_kind: str = "ev_table") -> Optional[str]:
-    files = list_data_files()
-    if not files:
-        return None
-
-    prefixes = VIEW_FILE_PREFIXES.get(view_key, [view_key])
-    phase_aliases = PHASE_FILE_ALIASES.get(phase_key, [phase_key])
-    variant_tokens = [variant_key]
-
-    kind_aliases = {
-        "ev_table": ["ev_table"],
-        "player_share": ["player_share", "strategy_player_share", "player_usage"],
-    }.get(table_kind, [table_kind])
-
-    candidates: List[Tuple[int, str]] = []
-    for path in files:
-        basename = os.path.basename(path).lower()
-        if not any(token in basename for token in variant_tokens):
-            continue
-        if not any(kind in basename for kind in kind_aliases):
-            continue
-        if not any(basename.startswith(prefix + "_") for prefix in prefixes):
-            continue
-        if not any(alias in basename for alias in phase_aliases):
-            continue
-
-        score = 0
-        for idx, prefix in enumerate(prefixes):
-            if basename.startswith(prefix + "_"):
-                score += 100 - idx
-        for idx, alias in enumerate(phase_aliases):
-            if alias in basename:
-                score += 20 - idx
-        for idx, kind in enumerate(kind_aliases):
-            if kind in basename:
-                score += 10 - idx
-        if basename.endswith(f"{variant_key}.csv"):
-            score += 20
-        candidates.append((score, path))
-
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: (-x[0], x[1]))
-    return candidates[0][1]
-
-
-def find_data_file(view_key: str, phase_key: str, variant_key: str) -> Optional[str]:
-    return find_table_file(view_key, phase_key, variant_key, table_kind="ev_table")
-
-
-def find_player_share_file(view_key: str, phase_key: str, variant_key: str) -> Optional[str]:
-    return find_table_file(view_key, phase_key, variant_key, table_kind="player_share")
-
-
 def get_available_player_ids(df: pd.DataFrame, column: str) -> List[int]:
     if column not in df.columns:
         return []
@@ -394,17 +333,19 @@ def render_strategy_section(df_sel: pd.DataFrame, use_spin: bool, section_key: s
 
     df_sel = prepare_strategy_df(df_sel, use_spin)
 
-    required_cols = ["EV", "count", "C_actionId"]
+    required_cols = ["EV", "C_actionId"]
     missing_cols = [col for col in required_cols if col not in df_sel.columns]
     if missing_cols:
         st.error(f"資料缺少必要欄位：{', '.join(missing_cols)}")
         return None
 
     plot_ev_usage(df_sel)
-    st.caption("EV 為策略層級勝率估計值；長條顏色代表估計信心度（依 Wilson 信賴區間寬度；無樣本以灰色顯示）")
+    st.caption("EWP 為策略層級勝率估計值；長條顏色代表估計信心度（依 Wilson 信賴區間寬度；無樣本以灰色顯示）")
     st.markdown("#### 策略估計可信度")
 
-    summary_cols = ["C_label", "EV", "count"]
+    summary_cols = ["C_label", "EV"]
+    if "count" in df_sel.columns:
+        summary_cols.append("count")
     if "ci_low" in df_sel.columns and "ci_high" in df_sel.columns:
         df_sel["95% CI"] = df_sel.apply(
             lambda r: "沒資料" if pd.isna(r.ci_low) or pd.isna(r.ci_high) else f"[{r.ci_low:.2f}, {r.ci_high:.2f}]",
@@ -470,71 +411,10 @@ def render_detail_card(c_row: pd.Series, use_spin: bool):
         st.dataframe(detail_df[ordered_cols].rename(columns=rename_map), width="stretch")
 
 
-def render_global_player_share(view_key: str, phase_key: str, variant_key: str, A_action: int, A_spin: Optional[int], c_row: pd.Series, player_info_map: Dict[int, dict]):
-    if view_key != "global":
-        return
-
-    share_path = find_player_share_file(view_key, phase_key, variant_key)
-    if share_path is None or not os.path.exists(share_path):
-        return
-
-    pdf = load_csv(share_path).copy()
-    if pdf.empty:
-        return
-
-    pdf = ensure_numeric_columns(
-        pdf,
-        ["A1_actionId", "A1_spinId", "C_actionId", "C_spinId", "A1_playerId", "use_count", "usage_share", "win_rate"],
-    )
-
-    required_cols = ["A1_playerId", "A1_actionId", "C_actionId"]
-    if any(col not in pdf.columns for col in required_cols):
-        return
-
-    pdf = pdf[pdf["A1_actionId"] == int(A_action)].copy()
-    pdf = pdf[pdf["C_actionId"] == int(c_row["C_actionId"])].copy()
-
-    use_spin = VARIANT_OPTIONS[variant_key]["use_spin"]
-    if use_spin:
-        if "A1_spinId" not in pdf.columns or "C_spinId" not in pdf.columns:
-            return
-        if A_spin is None or "C_spinId" not in c_row.index or pd.isna(c_row["C_spinId"]):
-            return
-        pdf = pdf[pdf["A1_spinId"] == int(A_spin)].copy()
-        pdf = pdf[pdf["C_spinId"] == int(c_row["C_spinId"])].copy()
-
-    if pdf.empty:
-        st.markdown("#### 前 5 高使用率選手（此策略）")
-        render_no_data("沒資料")
-        return
-
-    sort_col = "usage_share" if "usage_share" in pdf.columns and not pdf["usage_share"].isna().all() else "use_count"
-    if sort_col not in pdf.columns:
-        return
-
-    top_players = pdf.sort_values(sort_col, ascending=False).head(5).copy()
-    top_players["Player"] = top_players["A1_playerId"].apply(lambda pid: get_player_info(int(pid), player_info_map)["player_name"])
-
-    if "use_count" in top_players.columns:
-        top_players["Use Count"] = top_players["use_count"].fillna(0).astype(int)
-    if "usage_share" in top_players.columns:
-        top_players["Usage Share (%)"] = (top_players["usage_share"] * 100).round(2)
-    if "win_rate" in top_players.columns:
-        top_players["Win Rate (%)"] = (top_players["win_rate"] * 100).round(1)
-
-    display_cols = ["Player"]
-    for col in ["Use Count", "Usage Share (%)", "Win Rate (%)"]:
-        if col in top_players.columns:
-            display_cols.append(col)
-
-    st.markdown("#### 前 5 高使用率選手（此策略）")
-    st.dataframe(top_players[display_cols].reset_index(drop=True), width="stretch")
-
-
 def build_header_markdown(view_key: str, phase_key: str, variant_key: str, selected_players: Dict[str, int], player_info_map: Dict[int, dict], A_action: int, A_spin: Optional[int]) -> str:
     lines = [
         f"**分頁：** {VIEW_OPTIONS[view_key]}",
-        f"**Phase：** {PHASE_OPTIONS[phase_key]}",
+        f"**策略階段：** {PHASE_OPTIONS[phase_key]}",
         f"**策略組合：** {VARIANT_OPTIONS[variant_key]['label']}",
     ]
 
@@ -556,83 +436,52 @@ def build_header_markdown(view_key: str, phase_key: str, variant_key: str, selec
 # =========================================================
 # Conditional response page helpers
 # =========================================================
-def list_csv_files_for_app() -> List[str]:
-    files: List[str] = []
-    search_dirs = [DATA_DIR, "."]
-    seen = set()
-    for d in search_dirs:
-        if not os.path.exists(d):
-            continue
-        for fname in os.listdir(d):
-            if not fname.lower().endswith(".csv"):
-                continue
-            path = os.path.join(d, fname)
-            norm = os.path.abspath(path)
-            if norm not in seen:
-                files.append(path)
-                seen.add(norm)
-    return sorted(files)
+def get_runtime_config(name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read deployment config without putting private tokens in source control."""
+    value = os.getenv(name)
+    if value:
+        return value
+
+    try:
+        value = st.secrets.get(name)
+    except Exception:
+        value = None
+
+    return str(value) if value else default
 
 
-def _filename_has_feature_type(basename: str, variant_key: str) -> bool:
-    if variant_key == "action_spin":
-        return "action_spin" in basename
-    # action-only 不要誤抓 action_spin
-    return "action" in basename and "action_spin" not in basename
+def get_conditional_filename(view_key: str, phase_key: str, variant_key: str) -> str:
+    if view_key not in VIEW_OPTIONS:
+        raise ValueError(f"不支援的 view：{view_key}")
+    if phase_key not in PHASE_TO_CONDITIONAL:
+        raise ValueError(f"不支援的 phase：{phase_key}")
+    if variant_key not in VARIANT_OPTIONS:
+        raise ValueError(f"不支援的 feature type：{variant_key}")
+
+    phase_token = PHASE_TO_CONDITIONAL[phase_key]
+    return f"{view_key}_{phase_token}_conditional_response_table_{variant_key}.csv"
 
 
-def _filename_has_view(basename: str, view_key: str) -> bool:
-    prefixes = VIEW_FILE_PREFIXES.get(view_key, [view_key])
-    # 有些檔名可能沒有 view token，例如 conditional_response_table_action_xgb_full_c.csv，視為 global 可用。
-    if view_key == "global" and not any(v in basename for v in ["global", "self", "opponent", "oppent", "both"]):
-        return True
-    return any(prefix in basename for prefix in prefixes)
+def download_conditional_response_file(view_key: str, phase_key: str, variant_key: str) -> str:
+    """Download only the selected CSV; hf_hub_download reuses the local HF cache."""
+    filename = get_conditional_filename(view_key, phase_key, variant_key)
+    repo_id = get_runtime_config("HF_DATASET_REPO", HF_DATASET_REPO_DEFAULT)
+    revision = get_runtime_config("HF_DATASET_REVISION", HF_DATASET_REVISION_DEFAULT)
+    token = get_runtime_config("HF_TOKEN")
 
-
-def find_conditional_response_file(
-    view_key: str,
-    phase_key: str,
-    variant_key: str,
-    #scoring_model: str = "xgb",
-    candidate_mode: str = "full_c",
-) -> Optional[str]:
-    files = list_csv_files_for_app()
-    phase_token = PHASE_TO_CONDITIONAL.get(phase_key, phase_key)
-    phase_aliases = PHASE_FILE_ALIASES.get(phase_key, [phase_key]) + [phase_token]
-
-    candidates: List[Tuple[int, str]] = []
-    for path in files:
-        basename = os.path.basename(path).lower()
-        if "conditional" not in basename or "response" not in basename:
-            continue
-        if not _filename_has_feature_type(basename, variant_key):
-            continue
-        #if scoring_model and scoring_model not in basename:
-        #    continue
-        if candidate_mode and candidate_mode not in basename:
-            continue
-        if not _filename_has_view(basename, view_key):
-            continue
-
-        score = 0
-        if basename.startswith("conditional_response"):
-            score += 20
-        if f"conditional_response_table_{variant_key}" in basename:
-            score += 20
-        if any(alias in basename for alias in phase_aliases):
-            score += 30
-        if view_key in basename:
-            score += 20
-        #if scoring_model in basename:
-            score += 10
-        if candidate_mode in basename:
-            score += 10
-        candidates.append((score, path))
-
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: (-x[0], x[1]))
-    return candidates[0][1]
+    try:
+        return hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            repo_type="dataset",
+            revision=revision,
+            token=token,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"無法從 private Hugging Face Dataset `{repo_id}` 下載 `{filename}`。"
+            "請確認 HF_TOKEN（或本機 `hf auth login`）、Dataset 權限及遠端檔名。"
+        ) from exc
 
 
 def normalize_conditional_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -764,7 +613,7 @@ def build_opponent_probability_table(df_a: pd.DataFrame, use_spin: bool) -> pd.D
 
 
 def build_ev_from_conditional(df_a: pd.DataFrame, use_spin: bool) -> pd.DataFrame:
-    required = {"C_actionId", "p_b_given_a_context_mean", "p_win_given_abc_mean"}
+    required = {"C_actionId", "EV"}
     if df_a.empty or not required.issubset(df_a.columns):
         return pd.DataFrame()
 
@@ -772,17 +621,18 @@ def build_ev_from_conditional(df_a: pd.DataFrame, use_spin: bool) -> pd.DataFram
     if use_spin and "C_spinId" in df_a.columns:
         c_cols.append("C_spinId")
 
-    tmp = df_a.copy()
-    tmp["weighted_win"] = tmp["p_b_given_a_context_mean"] * tmp["p_win_given_abc_mean"]
+    tmp = df_a.dropna(subset=["EV"]).copy()
+    if tmp.empty:
+        return pd.DataFrame()
 
-    agg_map = {"weighted_win": "sum"}
+    agg_map = {"EV": "first"}
     if "n_context" in tmp.columns:
         agg_map["n_context"] = "max"
 
-    out = tmp.groupby(c_cols, as_index=False).agg(agg_map).rename(columns={"weighted_win": "EV_from_conditional"})
+    out = tmp.groupby(c_cols, as_index=False).agg(agg_map)
     out = add_conditional_labels(out, use_spin)
-    out = out.sort_values("EV_from_conditional", ascending=False).reset_index(drop=True)
-    out["期望平均勝率 (%)"] = (out["EV_from_conditional"] * 100).round(1)
+    out = out.sort_values("EV", ascending=False).reset_index(drop=True)
+    out["期望平均勝率 (%)"] = (out["EV"] * 100).round(1)
     return out
 
 
@@ -806,23 +656,10 @@ def render_next_response_page(view_key: str, phase_key: str, variant_key: str, p
     st.title("下一拍回球模擬")
     st.caption("這個頁面是先看對手下一拍 B 的機率，再看指定 B 後回 C 的模型估計勝率。")
 
-    # 目前下一拍回球模擬固定使用 XGB scoring model 與 Full C 候選策略。
-    # 因為沒有其他可選模式，不在 sidebar 顯示模式選項。
-    #scoring_model = "xgb"
-    candidate_mode = "full_c"
-
-    path = find_conditional_response_file(
-        view_key=view_key,
-        phase_key=phase_key,
-        variant_key=variant_key,
-        #scoring_model=scoring_model,
-        candidate_mode=candidate_mode,
-    )
-    if path is None:
-        st.warning(
-            "找不到對應的 conditional response table。請把檔案放到 data/，"
-        )
-
+    try:
+        path = download_conditional_response_file(view_key, phase_key, variant_key)
+    except RuntimeError as exc:
+        st.error(str(exc))
         return
 
     raw_df = load_csv(path)
@@ -920,7 +757,7 @@ def render_next_response_page(view_key: str, phase_key: str, variant_key: str, p
             xlabel="Estimated win probability",
         )
 
-    st.markdown("## 3. 綜合所有對手回球後的策略 EV")
+    st.markdown("## 3. 綜合所有對手回球後的策略 EWP")
     ev_from_cond = build_ev_from_conditional(df_a, use_spin)
     if ev_from_cond.empty:
         render_no_data("無法從 conditional table 聚合 EV")
@@ -932,23 +769,22 @@ def render_next_response_page(view_key: str, phase_key: str, variant_key: str, p
         ev_from_cond[display_cols].rename(columns={"C_label": "建議回球 C"}),
         width="stretch",
     )
-    st.caption("這個值用來做一般策略推薦；指定 B 後勝率則用於情境假設分析。")
+    st.caption("此處直接使用 compute_ev 輸出的正式 full_c EV；指定 B 後勝率則用於情境假設分析。")
 
 
 def render_strategy_ev_page(view_key: str, phase_key: str, variant_key: str, player_info_map: Dict[int, dict]):
-    st.title("桌球策略期望值 (EV) Dashboard")
+    st.title("桌球策略期望值 (EWP) Dashboard")
 
-    csv_path = find_data_file(view_key, phase_key, variant_key)
-    if csv_path is None:
-        render_no_data("沒資料")
-        st.stop()
-
-    if not os.path.exists(csv_path):
-        render_no_data("沒資料")
+    try:
+        csv_path = download_conditional_response_file(view_key, phase_key, variant_key)
+    except RuntimeError as exc:
+        st.error(str(exc))
         st.stop()
 
     df = load_csv(csv_path)
+    df = normalize_conditional_columns(df)
     df = normalize_ev_columns(df)
+    df = filter_conditional_phase(df, phase_key)
 
     if df.empty:
         render_no_data("沒資料")
@@ -956,11 +792,31 @@ def render_strategy_ev_page(view_key: str, phase_key: str, variant_key: str, pla
 
     use_spin = VARIANT_OPTIONS[variant_key]["use_spin"]
 
+    if "EV" not in df.columns:
+        st.error("conditional response 表缺少 EV 欄位；請使用新版 compute_ev 輸出或先合併對應 EV 表。")
+        st.stop()
+
     # player filters: 只要資料裡有 player 欄位就自動提供篩選
     filtered_df, selected_players = apply_player_filters(df, player_info_map)
+    filtered_df = filtered_df.dropna(subset=["EV"]).copy()
     if filtered_df.empty:
-        render_no_data("沒資料")
+        render_no_data("目前 conditional response 表沒有可用的正式 EV")
         st.stop()
+
+    strategy_cols = ["A1_actionId", "C_actionId"]
+    if use_spin:
+        strategy_cols.extend(["A1_spinId", "C_spinId"])
+    strategy_cols = [col for col in strategy_cols if col in filtered_df.columns]
+    strategy_agg = {"EV": ("EV", "first")}
+    if "count" in filtered_df.columns:
+        # count 是 train 中實際觀察到的 entity+A+C 次數，與原版 EV 表
+        # 的信心度來源相同；full_c 新增但未觀察過的策略會維持 NaN。
+        strategy_agg["count"] = ("count", "max")
+    filtered_df = filtered_df.groupby(
+        strategy_cols,
+        as_index=False,
+        dropna=False,
+    ).agg(**strategy_agg)
 
     if "A1_actionId" not in filtered_df.columns:
         st.error("資料缺少 A1_actionId 欄位")
@@ -1012,7 +868,6 @@ def render_strategy_ev_page(view_key: str, phase_key: str, variant_key: str, pla
     c_row = render_strategy_section(df_sel, use_spin, f"{view_key}_{phase_key}_{variant_key}")
     if c_row is not None:
         render_detail_card(c_row, use_spin)
-        render_global_player_share(view_key, phase_key, variant_key, A_action, A_spin, c_row, player_info_map)
 
 
 # =========================================================
@@ -1034,7 +889,7 @@ view_key = st.sidebar.radio(
     format_func=lambda k: VIEW_OPTIONS[k],
 )
 phase_key = st.sidebar.radio(
-    "Phase",
+    "策略階段",
     list(PHASE_OPTIONS.keys()),
     format_func=lambda k: PHASE_OPTIONS[k],
 )
