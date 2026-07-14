@@ -10,9 +10,10 @@ pip install -r requirements.txt
 
 ## 設定 private Hugging Face Dataset
 
-Dashboard 預設從 private Dataset `wobuchida/tb-ewp-dashboard` 讀取 CSV。程式只會下載目前選到的視角、階段與球種組合，下載結果由 `huggingface_hub` 快取。
+原 CSV 檔在雲端硬碟，由於檔案太大無法上傳到 github 因此把資料都上傳到了 Hugging Face Dataset。Dashboard 預設從 private Dataset `wobuchida/tb-ewp-dashboard` 讀取 CSV。程式只會下載目前選到的視角、階段與球種組合，下載結果由 `huggingface_hub` 快取。
 
-本機可先登入 Hugging Face：
+### Hugging Face Dataset 上傳與 Streamlit 設定
+登入 Hugging Face：
 
 ```bash
 hf auth login
@@ -28,7 +29,7 @@ export HF_TOKEN="hf_..."
 
 ```toml
 HF_TOKEN = "hf_..."
-HF_DATASET_REPO = "wobuchida/tb-ewp-dashboard"
+HF_DATASET_REPO = "{user}/tb-ewp-dashboard"
 ```
 
 `HF_DATASET_REPO` 可省略；預設值就是上述 Dataset。若需要固定某個 commit 或 branch，可另設 `HF_DATASET_REVISION`，預設為 `main`。
