@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
+/data/*
+!/data/strategy_player_share_A1C.csv
+!/data/strategy_player_share_A1C_spin.csv
